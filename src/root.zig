@@ -3,16 +3,19 @@ const testing = std.testing;
 
 const Mode = enum {
     normal,
+    not_special,
 };
 
 const Status = enum {
     pending,
     rejected,
+    matched,
 };
 
 const RegExp = struct {
     re: []const u8,
     str: []const u8 = undefined,
+    str_start_loc: usize = 0,
     has_start_anchor: bool = false,
 
     fn init(re: []const u8) RegExp {
@@ -21,28 +24,30 @@ const RegExp = struct {
         };
     }
 
-    fn process(self: *RegExp, mode: Mode, re_cursor: usize, str_cursor: usize) bool {
-
+    fn checkLengths(self: *RegExp, re_cursor: usize, str_cursor: usize) Status {
         // If we have consumed all the regex
         if (re_cursor == self.re.len) {
-            return true;
+            return Status.matched;
         }
 
         // If we have consumed all the string
         if (str_cursor == self.str.len) {
 
             // and have consumed all the regex
-            if (re_cursor == self.re.len) return true;
+            if (re_cursor == self.re.len) return Status.matched;
 
             // Else, if we haven't consumed all the regex
             // then check for end anchor
             if (self.re[re_cursor] == '$' and re_cursor == self.re.len - 1) {
-                return true;
+                return Status.matched;
             } else {
-                return false;
+                return Status.rejected;
             }
         }
+        return Status.pending;
+    }
 
+    fn processSpecialChars(self: *RegExp, mode: Mode, re_cursor: usize, str_cursor: usize) bool {
         switch (self.re[re_cursor]) {
             '^' => {
                 if (re_cursor == 0 and self.str.len == self.str.len) {
@@ -53,12 +58,40 @@ const RegExp = struct {
             '.' => {
                 return self.process(mode, re_cursor + 1, str_cursor + 1);
             },
-            else => {
-                if (self.re[re_cursor] == self.str[str_cursor])
-                    return self.process(mode, re_cursor + 1, str_cursor + 1);
+            '\\' => {
+                return self.process(Mode.not_special, re_cursor + 1, str_cursor);
+            },
+            else => {},
+        }
+        return self.process(Mode.not_special, re_cursor, str_cursor);
+    }
+
+    fn statusSwitch(self: *RegExp, mode: Mode, re_cursor: usize, str_cursor: usize, status: Status) bool {
+        switch (status) {
+            Status.rejected => return false,
+            Status.matched => return true,
+            Status.pending => {
+                switch (mode) {
+                    Mode.normal => {
+                        return self.processSpecialChars(mode, re_cursor, str_cursor);
+                    },
+                    Mode.not_special => {
+                        if (self.re[re_cursor] == self.str[str_cursor])
+                            return self.process(Mode.normal, re_cursor + 1, str_cursor + 1);
+                    },
+                }
+
+                if (self.has_start_anchor) return self.statusSwitch(mode, re_cursor, str_cursor, Status.rejected);
+
+                self.str_start_loc += 1;
+                return self.process(mode, 0, self.str_start_loc);
             },
         }
-        return if (self.has_start_anchor) false else self.process(mode, 0, str_cursor - re_cursor + 1);
+    }
+
+    fn process(self: *RegExp, mode: Mode, re_cursor: usize, str_cursor: usize) bool {
+        const lengths_status = self.checkLengths(re_cursor, str_cursor);
+        return self.statusSwitch(mode, re_cursor, str_cursor, lengths_status);
     }
 
     fn matches(self: *RegExp, str: []const u8) bool {
@@ -93,4 +126,10 @@ test "End anchor" {
 test "Dot" {
     var re = RegExp.init("H.l.o .o..d");
     try std.testing.expect(re.matches("Hello World"));
+}
+
+test "Backslash" {
+    var re = RegExp.init("H\\.llo");
+    try std.testing.expect(re.matches("H.llo"));
+    try std.testing.expect(!re.matches("Hello"));
 }
