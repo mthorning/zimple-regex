@@ -49,6 +49,12 @@ const RegExp = struct {
         return Status.pending;
     }
 
+    fn isOptionalChar(self: *RegExp, re_cursor: usize) bool {
+        if (re_cursor + 1 > (self.re.len - 1)) return false;
+        const re = self.re[re_cursor + 1];
+        return re == '*' or re == '?';
+    }
+
     fn processSpecialChars(self: *RegExp, mode: Mode, re_cursor: usize, str_cursor: usize) bool {
         switch (self.re[re_cursor]) {
             '^' => {
@@ -68,6 +74,9 @@ const RegExp = struct {
             },
             '+' => {
                 return self.process(Mode.quantifier, re_cursor - 1, str_cursor);
+            },
+            '?' => {
+                return self.process(Mode.normal, re_cursor + 1, str_cursor);
             },
             else => {},
         }
@@ -101,7 +110,7 @@ const RegExp = struct {
         if (self.has_start_anchor) return false;
 
         // If the next re char is * then we can carry on
-        if (re_cursor + 1 <= (self.re.len - 1) and self.re[re_cursor + 1] == '*') {
+        if (self.isOptionalChar(re_cursor)) {
             return if (re_cursor + 2 <= (self.re.len - 1))
                 self.process(Mode.normal, re_cursor + 2, str_cursor)
             else
@@ -166,4 +175,10 @@ test "Plus quantifier" {
     try testing.expect(re.matches("Woooorld"));
     try testing.expect(!re.matches("Wrld"));
     try testing.expect(!re.matches("Wirld"));
+}
+
+test "Optional character" {
+    var re = RegExp.init("Wo?rld");
+    try testing.expect(re.matches("World"));
+    try testing.expect(re.matches("Wrld"));
 }
