@@ -156,8 +156,8 @@ test "Dot" {
 }
 
 test "Backslash" {
-    var re = RegExp.init("H\\.ll\\*\\+o");
-    try testing.expect(re.matches("H.ll*+o"));
+    var re = RegExp.init("H\\.l\\?l\\*\\+o");
+    try testing.expect(re.matches("H.l?l*+o"));
     try testing.expect(!re.matches("Hello"));
 }
 
