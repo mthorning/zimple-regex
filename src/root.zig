@@ -73,12 +73,7 @@ const RegExp = struct {
 
     fn statusSwitch(self: *RegExp, mode: Mode, re_cursor: usize, str_cursor: usize, status: Status) bool {
         switch (status) {
-            Status.rejected => {
-                if (re_cursor + 2 <= (self.re.len - 1) and self.re[re_cursor + 2] == '*') {
-                    return self.process(Mode.normal, re_cursor + 3, str_cursor);
-                }
-                return false;
-            },
+            Status.rejected => return false,
             Status.matched => return true,
             Status.pending => {
                 const re = self.re[re_cursor];
@@ -104,6 +99,14 @@ const RegExp = struct {
 
                 if (self.has_start_anchor) return self.statusSwitch(mode, re_cursor, str_cursor, Status.rejected);
 
+                if (re_cursor + 1 <= (self.re.len - 1) and self.re[re_cursor + 1] == '*') {
+                    if (re_cursor + 2 <= (self.re.len - 1)) {
+                        return self.process(Mode.normal, re_cursor + 2, str_cursor);
+                    } else {
+                        return self.statusSwitch(Mode.normal, re_cursor + 2, str_cursor, Status.matched);
+                    }
+                }
+
                 self.str_start_loc += 1;
                 return self.process(mode, 0, self.str_start_loc);
             },
@@ -122,42 +125,42 @@ const RegExp = struct {
     }
 };
 
-// test "Simple strings" {
-//     var re = RegExp.init("lo W");
-//     try testing.expect(re.matches("Hello World"));
-//     try testing.expect(!re.matches("Hello Globe"));
-// }
+test "Simple strings" {
+    var re = RegExp.init("lo W");
+    try testing.expect(re.matches("Hello World"));
+    try testing.expect(!re.matches("Hello Globe"));
+}
 
-// test "Start anchor" {
-//     var re = RegExp.init("^Hell");
-//     try testing.expect(re.matches("Hello World"));
+test "Start anchor" {
+    var re = RegExp.init("^Hell");
+    try testing.expect(re.matches("Hello World"));
 
-//     re = RegExp.init("^ell");
-//     try testing.expect(!re.matches("Hello World"));
-// }
+    re = RegExp.init("^ell");
+    try testing.expect(!re.matches("Hello World"));
+}
 
-// test "End anchor" {
-//     var re = RegExp.init("World$");
-//     try testing.expect(re.matches("Hello World"));
+test "End anchor" {
+    var re = RegExp.init("World$");
+    try testing.expect(re.matches("Hello World"));
 
-//     re = RegExp.init("l$");
-//     try testing.expect(!re.matches("Hello World"));
-// }
+    re = RegExp.init("l$");
+    try testing.expect(!re.matches("Hello World"));
+}
 
-// test "Dot" {
-//     var re = RegExp.init("H.l.o .o..d");
-//     try testing.expect(re.matches("Hello World"));
-// }
+test "Dot" {
+    var re = RegExp.init("H.l.o .o..d");
+    try testing.expect(re.matches("Hello World"));
+}
 
-// test "Backslash" {
-//     var re = RegExp.init("H\\.llo");
-//     try testing.expect(re.matches("H.llo"));
-//     try testing.expect(!re.matches("Hello"));
-// }
+test "Backslash" {
+    var re = RegExp.init("H\\.llo");
+    try testing.expect(re.matches("H.llo"));
+    try testing.expect(!re.matches("Hello"));
+}
 
 test "Asterisk quantifier" {
     var re = RegExp.init("Wo*rld");
-    // try testing.expect(re.matches("Wld"));
+    try testing.expect(re.matches("Wrld"));
     try testing.expect(re.matches("Woorld"));
     try testing.expect(re.matches("Woooorld"));
     try testing.expect(!re.matches("Wirld"));
