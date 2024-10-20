@@ -1,7 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 
-const Mode = enum { normal, not_special, asterisk_quantifier };
+const Mode = enum { normal, not_special, quantifier };
 
 const Status = enum {
     pending,
@@ -64,58 +64,52 @@ const RegExp = struct {
                 return self.process(Mode.not_special, re_cursor + 1, str_cursor);
             },
             '*' => {
-                return self.process(Mode.asterisk_quantifier, re_cursor - 1, str_cursor);
+                return self.process(Mode.quantifier, re_cursor - 1, str_cursor);
+            },
+            '+' => {
+                return self.process(Mode.quantifier, re_cursor - 1, str_cursor);
             },
             else => {},
         }
         return self.process(Mode.not_special, re_cursor, str_cursor);
     }
 
-    fn statusSwitch(self: *RegExp, mode: Mode, re_cursor: usize, str_cursor: usize, status: Status) bool {
-        switch (status) {
-            Status.rejected => return false,
+    fn process(self: *RegExp, mode: Mode, re_cursor: usize, str_cursor: usize) bool {
+        switch (self.checkLengths(re_cursor, str_cursor)) {
             Status.matched => return true,
-            Status.pending => {
-                const re = self.re[re_cursor];
-                const str = self.str[str_cursor];
-                _ = re;
-                _ = str;
-                switch (mode) {
-                    Mode.normal => {
-                        return self.processSpecialChars(mode, re_cursor, str_cursor);
-                    },
-                    Mode.not_special => {
-                        if (self.re[re_cursor] == self.str[str_cursor])
-                            return self.process(Mode.normal, re_cursor + 1, str_cursor + 1);
-                    },
-                    Mode.asterisk_quantifier => {
-                        if (self.re[re_cursor] == self.str[str_cursor]) {
-                            return self.process(mode, re_cursor, str_cursor + 1);
-                        } else {
-                            return self.process(Mode.normal, re_cursor + 2, str_cursor);
-                        }
-                    },
+            Status.rejected => return false,
+            else => {},
+        }
+
+        switch (mode) {
+            Mode.normal => {
+                return self.processSpecialChars(mode, re_cursor, str_cursor);
+            },
+            Mode.not_special => {
+                if (self.re[re_cursor] == self.str[str_cursor])
+                    return self.process(Mode.normal, re_cursor + 1, str_cursor + 1);
+            },
+            Mode.quantifier => {
+                if (self.re[re_cursor] == self.str[str_cursor]) {
+                    return self.process(mode, re_cursor, str_cursor + 1);
+                } else {
+                    return self.process(Mode.normal, re_cursor + 2, str_cursor);
                 }
-
-                if (self.has_start_anchor) return self.statusSwitch(mode, re_cursor, str_cursor, Status.rejected);
-
-                if (re_cursor + 1 <= (self.re.len - 1) and self.re[re_cursor + 1] == '*') {
-                    if (re_cursor + 2 <= (self.re.len - 1)) {
-                        return self.process(Mode.normal, re_cursor + 2, str_cursor);
-                    } else {
-                        return self.statusSwitch(Mode.normal, re_cursor + 2, str_cursor, Status.matched);
-                    }
-                }
-
-                self.str_start_loc += 1;
-                return self.process(mode, 0, self.str_start_loc);
             },
         }
-    }
 
-    fn process(self: *RegExp, mode: Mode, re_cursor: usize, str_cursor: usize) bool {
-        const lengths_status = self.checkLengths(re_cursor, str_cursor);
-        return self.statusSwitch(mode, re_cursor, str_cursor, lengths_status);
+        if (self.has_start_anchor) return false;
+
+        // If the next re char is * then we can carry on
+        if (re_cursor + 1 <= (self.re.len - 1) and self.re[re_cursor + 1] == '*') {
+            return if (re_cursor + 2 <= (self.re.len - 1))
+                self.process(Mode.normal, re_cursor + 2, str_cursor)
+            else
+                true;
+        }
+
+        self.str_start_loc += 1;
+        return self.process(mode, 0, self.str_start_loc);
     }
 
     fn matches(self: *RegExp, str: []const u8) bool {
@@ -153,8 +147,8 @@ test "Dot" {
 }
 
 test "Backslash" {
-    var re = RegExp.init("H\\.llo");
-    try testing.expect(re.matches("H.llo"));
+    var re = RegExp.init("H\\.ll\\*\\+o");
+    try testing.expect(re.matches("H.ll*+o"));
     try testing.expect(!re.matches("Hello"));
 }
 
@@ -163,5 +157,13 @@ test "Asterisk quantifier" {
     try testing.expect(re.matches("Wrld"));
     try testing.expect(re.matches("Woorld"));
     try testing.expect(re.matches("Woooorld"));
+    try testing.expect(!re.matches("Wirld"));
+}
+
+test "Plus quantifier" {
+    var re = RegExp.init("Wo+rld");
+    try testing.expect(re.matches("Woorld"));
+    try testing.expect(re.matches("Woooorld"));
+    try testing.expect(!re.matches("Wrld"));
     try testing.expect(!re.matches("Wirld"));
 }
