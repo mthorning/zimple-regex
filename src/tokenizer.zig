@@ -1,19 +1,24 @@
 const std = @import("std");
 const testing = std.testing;
 
+const ReError = error{
+    ReLength,
+    InvalidQuantifierSubject,
+};
+
 // Scalars
 const SType = enum {
     literal,
-    start_of_line,
     end_of_line,
     any,
+    start_of_line,
 };
 
 const SToken = union(SType) {
     literal: u8,
-    start_of_line,
     end_of_line,
     any,
+    start_of_line,
 };
 
 // Quantifiers
@@ -33,25 +38,44 @@ const Token = union(TokenType) {
     quantifier: QToken,
 };
 
-fn tokenize(allocator: std.mem.Allocator, re: []const u8) ![]Token {
-    var tokens = try allocator.alloc(Token, re.len);
+fn quantifier(tokens: *std.ArrayListAligned(Token, null), re_cursor: *usize, tokens_cursor: usize) !void {
+    if (tokens_cursor == 0) return ReError.InvalidQuantifierSubject;
+
+    switch (tokens.items[tokens_cursor - 1]) {
+        Token.scalar => |token| {
+            tokens.items[tokens_cursor - 1] = Token{ .quantifier = .{ .one_or_more = token } };
+            re_cursor.* += 1;
+        },
+        else => return ReError.InvalidQuantifierSubject,
+    }
+}
+fn tokenize(allocator: std.mem.Allocator, re: []const u8) !std.ArrayListAligned(Token, null) {
+    var tokens = std.ArrayList(Token).init(allocator);
 
     var re_cursor: usize = 0;
     var tokens_cursor: usize = 0;
 
     while (re_cursor < re.len) {
-        const new_token = switch (re[re_cursor]) {
-            '^' => .{ .scalar = .start_of_line },
-            '$' => .{ .scalar = .end_of_line },
-            '.' => .{ .scalar = .any },
-            '+' => blk: {
-                const one_or_more_value = tokens[tokens_cursor];
-                break :blk Token{ .quantifier = .{ .one_or_more = one_or_more_value } };
+        switch (re[re_cursor]) {
+            '.' => try tokens.append(.{ .scalar = .any }),
+            '^' => try tokens.append(.{ .scalar = .start_of_line }),
+            '$' => try tokens.append(.{ .scalar = .end_of_line }),
+            '\\' => {
+                if (re_cursor == re.len - 1) return ReError.ReLength;
+                re_cursor += 1;
+                try tokens.append(.{ .scalar = .{ .literal = re[re_cursor] } });
             },
-            else => .{ .scalar = .{ .literal = re[re_cursor] } },
-        };
+            '*' => {
+                try quantifier(&tokens, &re_cursor, tokens_cursor);
+                continue;
+            },
+            '+' => {
+                try quantifier(&tokens, &re_cursor, tokens_cursor);
+                continue;
+            },
+            else => try tokens.append(.{ .scalar = .{ .literal = re[re_cursor] } }),
+        }
 
-        tokens[tokens_cursor] = new_token;
         re_cursor += 1;
         tokens_cursor += 1;
     }
@@ -62,23 +86,71 @@ fn tokenize(allocator: std.mem.Allocator, re: []const u8) ![]Token {
 test "basics" {
     const allocator = testing.allocator;
     const tokens = try tokenize(allocator, "^h.i$");
-    defer allocator.free(tokens);
+    defer tokens.deinit();
 
-    try testing.expectEqualSlices(Token, tokens, &[_]Token{
+    try testing.expectEqualSlices(Token, &[_]Token{
         .{ .scalar = .start_of_line },
         .{ .scalar = .{ .literal = 'h' } },
         .{ .scalar = .any },
         .{ .scalar = .{ .literal = 'i' } },
         .{ .scalar = .end_of_line },
-    });
+    }, tokens.items);
 }
 
-// test "quantifiers" {
-//     const allocator = testing.allocator;
-//     const tokens = try tokenize(allocator, "h+");
-//     defer allocator.free(tokens);
+test "quantifiers" {
+    const allocator = testing.allocator;
+    var tokens = try tokenize(allocator, "h+a+");
 
-//     try testing.expectEqualSlices(Token, tokens, &[_]Token{
-//         .{ .one_or_more = .{ .literal = 'h' } },
-//     });
-// }
+    try testing.expectEqualSlices(Token, &[_]Token{
+        Token{ .quantifier = .{ .one_or_more = SToken{ .literal = 'h' } } },
+        Token{ .quantifier = .{ .one_or_more = SToken{ .literal = 'a' } } },
+    }, tokens.items);
+
+    tokens.deinit();
+
+    tokens = try tokenize(allocator, "h*a*");
+
+    try testing.expectEqualSlices(Token, &[_]Token{
+        Token{ .quantifier = .{ .one_or_more = SToken{ .literal = 'h' } } },
+        Token{ .quantifier = .{ .one_or_more = SToken{ .literal = 'a' } } },
+    }, tokens.items);
+
+    tokens.deinit();
+
+    var errorTokens = tokenize(allocator, "+");
+    try testing.expectError(ReError.InvalidQuantifierSubject, errorTokens);
+
+    errorTokens = tokenize(allocator, "+*");
+    try testing.expectError(ReError.InvalidQuantifierSubject, errorTokens);
+
+    errorTokens = tokenize(allocator, "*+");
+    try testing.expectError(ReError.InvalidQuantifierSubject, errorTokens);
+}
+
+test "escaping" {
+    const allocator = testing.allocator;
+    var tokens = try tokenize(allocator, "h\\+");
+
+    try testing.expectEqualSlices(Token, &[_]Token{
+        Token{ .scalar = .{ .literal = 'h' } },
+        Token{ .scalar = .{ .literal = '+' } },
+    }, tokens.items);
+
+    tokens.deinit();
+
+    tokens = try tokenize(allocator, "\\\\");
+
+    try testing.expectEqualSlices(Token, &[_]Token{
+        Token{ .scalar = .{ .literal = '\\' } },
+    }, tokens.items);
+
+    tokens.deinit();
+
+    tokens = try tokenize(allocator, "\\h");
+
+    try testing.expectEqualSlices(Token, &[_]Token{
+        Token{ .scalar = .{ .literal = 'h' } },
+    }, tokens.items);
+
+    tokens.deinit();
+}
